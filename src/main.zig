@@ -190,6 +190,6 @@ fn read(filter: []const u8) !void {
 }
 
 pub fn main() !void {
-    // try read("subsystem == 'com.apple.controlcenter' && category == 'sensor-indicators' && formatString BEGINSWITH 'Active '");
-    try read("subsystem == 'com.apple.controlcenter' && category == 'contentSharing'");
+    // We only see new events
+    try read("(subsystem == 'com.apple.controlcenter' && category == 'sensor-indicators' && formatString BEGINSWITH 'Active ') OR (subsystem == 'com.apple.controlcenter' && category == 'contentSharing')");
 }
