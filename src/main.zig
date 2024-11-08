@@ -101,11 +101,8 @@ fn processScreenShareLegacy(entry: LogStream, temp: *std.ArrayList([]const u8), 
 fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8), activeServices: *std.ArrayList([]u8)) !void {
     const prefix = "Active activity attributions changed to [";
     const extracted = entry.eventMessage[prefix.len .. entry.eventMessage.len - 1];
-    if (extracted.len == 0) {
-        try stderr.print("No items in active list\n", .{});
-        // todo remove all from active list
-        return;
-    } else {
+
+    if (extracted.len != 0) {
         var items = std.mem.splitSequence(u8, extracted, ", ");
         while (items.next()) |itemDirty| {
             const item = itemDirty[1 .. itemDirty.len - 1];
