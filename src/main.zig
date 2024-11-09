@@ -8,7 +8,9 @@ const allocator = std.heap.page_allocator;
 const stdout = std.io.getStdOut().writer();
 const stderr = std.io.getStdErr().writer();
 
-fn processScreenShare(entry: LogStream, temp: *std.ArrayList([]const u8), activeServices: *std.ArrayList([]u8)) !void {
+const PREFIX_SCREENSHARE = "screen:";
+
+fn processScreenShare(entry: LogStream, temp: *std.ArrayList([]const u8)) !void {
     var items = std.mem.splitSequence(u8, entry.eventMessage, "\n");
     // Skip the first line (text)
     _ = items.next();
@@ -19,86 +21,27 @@ fn processScreenShare(entry: LogStream, temp: *std.ArrayList([]const u8), active
         const endIdx = std.mem.indexOfPos(u8, itemDirty, startIdx, "\"").?;
 
         const item = itemDirty[startIdx..endIdx];
-        try temp.append(item);
-    }
 
-    {
-        for (temp.items) |value| {
-            if (for (activeServices.items) |valueB| {
-                if (std.mem.eql(u8, value, valueB)) {
-                    break false;
-                }
-            } else true) {
-                try stdout.print("New service screen:{s}\n", .{value});
-                var str = try allocator.alloc(u8, value.len);
-                for (value, 0..) |char, i| {
-                    str[i] = char;
-                }
-
-                try activeServices.append(str);
-            }
-        }
-    }
-
-    // Check for removed services
-    {
-        for (activeServices.items, 0..) |value, idx| {
-            if (for (temp.items) |valueB| {
-                if (std.mem.eql(u8, value, valueB)) {
-                    break false;
-                }
-            } else true) {
-                try stdout.print("Expiring service screen:{s}\n", .{value});
-                const removedItem = activeServices.swapRemove(idx); // orderedRemove?
-                allocator.free(removedItem);
-            }
-        }
+        const newStr = try allocator.alloc(u8, PREFIX_SCREENSHARE.len + item.len);
+        std.mem.copyForwards(u8, newStr, PREFIX_SCREENSHARE);
+        std.mem.copyForwards(u8, newStr[PREFIX_SCREENSHARE.len..], item);
+        try temp.append(newStr);
     }
 }
 
-fn processScreenShareLegacy(entry: LogStream, temp: *std.ArrayList([]const u8), activeServices: *std.ArrayList([]u8)) !void {
+fn processScreenShareLegacy(entry: LogStream, temp: *std.ArrayList([]const u8)) !void {
     var items = std.mem.splitSequence(u8, entry.eventMessage, "\n");
     // Skip the first line (text)
     _ = items.next();
     while (items.next()) |item| {
-        try temp.append(item);
-    }
-
-    {
-        for (temp.items) |value| {
-            if (for (activeServices.items) |valueB| {
-                if (std.mem.eql(u8, value, valueB)) {
-                    break false;
-                }
-            } else true) {
-                try stdout.print("New service screen:{s}\n", .{value});
-                var str = try allocator.alloc(u8, value.len);
-                for (value, 0..) |char, i| {
-                    str[i] = char;
-                }
-
-                try activeServices.append(str);
-            }
-        }
-    }
-
-    // Check for removed services
-    {
-        for (activeServices.items, 0..) |value, idx| {
-            if (for (temp.items) |valueB| {
-                if (std.mem.eql(u8, value, valueB)) {
-                    break false;
-                }
-            } else true) {
-                try stdout.print("Expiring service screen:{s}\n", .{value});
-                const removedItem = activeServices.swapRemove(idx); // orderedRemove?
-                allocator.free(removedItem);
-            }
-        }
+        const newStr = try allocator.alloc(u8, PREFIX_SCREENSHARE.len + item.len);
+        std.mem.copyForwards(u8, newStr, PREFIX_SCREENSHARE);
+        std.mem.copyForwards(u8, newStr[PREFIX_SCREENSHARE.len..], item);
+        try temp.append(newStr);
     }
 }
 
-fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8), activeServices: *std.ArrayList([]u8)) !void {
+fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8)) !void {
     const prefix = "Active activity attributions changed to [";
     const extracted = entry.eventMessage[prefix.len .. entry.eventMessage.len - 1];
 
@@ -109,44 +52,16 @@ fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8), activeSe
             if (std.mem.eql(u8, item, "loc:System Services")) {
                 continue;
             }
-            try temp.append(item);
-        }
-    }
 
-    // Check for new services
-    {
-        for (temp.items) |value| {
-            if (for (activeServices.items) |valueB| {
-                if (std.mem.eql(u8, value, valueB)) {
-                    break false;
-                }
-            } else true) {
-                try stdout.print("New service {s}\n", .{value});
-                var str = try allocator.alloc(u8, value.len);
-                for (value, 0..) |char, i| {
-                    str[i] = char;
-                }
+            const newStr = try allocator.alloc(u8, item.len);
+            std.mem.copyForwards(u8, newStr, item);
 
-                try activeServices.append(str);
-            }
-        }
-    }
-
-    // Check for removed services
-    {
-        for (activeServices.items, 0..) |value, idx| {
-            if (for (temp.items) |valueB| {
-                if (std.mem.eql(u8, value, valueB)) {
-                    break false;
-                }
-            } else true) {
-                try stdout.print("Expiring service {s}\n", .{value});
-                const removedItem = activeServices.swapRemove(idx); // orderedRemove?
-                allocator.free(removedItem);
-            }
+            try temp.append(newStr);
         }
     }
 }
+
+const TYPE = enum { CAM_MIC_LOC, SCREEN, SCREEN_LEGACY };
 
 fn read(filter: []const u8) !void {
     var proc = ChildProcess.init(&[_][]const u8{ "/usr/bin/log", "stream", "--style", "ndjson", "--predicate", filter }, allocator);
@@ -164,13 +79,13 @@ fn read(filter: []const u8) !void {
 
     try stderr.print("Observing events...\n", .{});
 
-    var activeServices_cam_mic_loc = try std.ArrayList([]u8).initCapacity(allocator, 5);
+    var activeServices_cam_mic_loc = try std.ArrayList([]const u8).initCapacity(allocator, 5);
     defer activeServices_cam_mic_loc.deinit();
 
-    var activeServices_screen = try std.ArrayList([]u8).initCapacity(allocator, 5);
+    var activeServices_screen = try std.ArrayList([]const u8).initCapacity(allocator, 5);
     defer activeServices_screen.deinit();
 
-    var activeServices_screen_legacy = try std.ArrayList([]u8).initCapacity(allocator, 5);
+    var activeServices_screen_legacy = try std.ArrayList([]const u8).initCapacity(allocator, 5);
     defer activeServices_screen_legacy.deinit();
 
     var tempServices = try std.ArrayList([]const u8).initCapacity(allocator, 5);
@@ -181,12 +96,49 @@ fn read(filter: []const u8) !void {
         const parsed = try std.json.parseFromSlice(LogStream, std.heap.page_allocator, buffer[0..bytesRead], .{ .ignore_unknown_fields = true });
         defer parsed.deinit();
 
+        var serviceType: TYPE = undefined;
         if (std.mem.startsWith(u8, parsed.value.eventMessage, "Content sharing streams ")) {
-            try processScreenShare(parsed.value, &tempServices, &activeServices_screen);
+            serviceType = TYPE.SCREEN;
+            try processScreenShare(parsed.value, &tempServices);
         } else if (std.mem.startsWith(u8, parsed.value.eventMessage, "Legacy sharing bundle ids ")) {
-            try processScreenShareLegacy(parsed.value, &tempServices, &activeServices_screen_legacy);
+            serviceType = TYPE.SCREEN_LEGACY;
+            try processScreenShareLegacy(parsed.value, &tempServices);
         } else if (std.mem.startsWith(u8, parsed.value.eventMessage, "Active ")) {
-            try processCamMicLoc(parsed.value, &tempServices, &activeServices_cam_mic_loc);
+            serviceType = TYPE.CAM_MIC_LOC;
+            try processCamMicLoc(parsed.value, &tempServices);
+        }
+
+        var activeServices = &switch (serviceType) {
+            TYPE.CAM_MIC_LOC => activeServices_cam_mic_loc,
+            TYPE.SCREEN => activeServices_screen,
+            TYPE.SCREEN_LEGACY => activeServices_screen_legacy,
+        };
+        {
+            for (tempServices.items) |value| {
+                if (for (activeServices.items) |valueB| {
+                    if (std.mem.eql(u8, value, valueB)) {
+                        break false;
+                    }
+                } else true) {
+                    try stdout.print("New service: {s}\n", .{value});
+                    try activeServices.append(value);
+                }
+            }
+        }
+
+        // Check for removed services
+        {
+            for (activeServices.items, 0..) |value, idx| {
+                if (for (tempServices.items) |valueB| {
+                    if (std.mem.eql(u8, value, valueB)) {
+                        break false;
+                    }
+                } else true) {
+                    try stdout.print("Expiring service: {s}\n", .{value});
+                    const removedItem = activeServices.swapRemove(idx);
+                    allocator.free(removedItem);
+                }
+            }
         }
 
         tempServices.clearAndFree();
