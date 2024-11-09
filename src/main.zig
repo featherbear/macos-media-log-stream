@@ -8,9 +8,9 @@ const allocator = std.heap.page_allocator;
 const stdout = std.io.getStdOut().writer();
 const stderr = std.io.getStdErr().writer();
 
-const PREFIX_SCREENSHARE = "screen:";
-
 fn processScreenShare(entry: LogStream, temp: *std.ArrayList([]const u8)) !void {
+    const PREFIX_SCREENSHARE = "screen:";
+
     var items = std.mem.splitSequence(u8, entry.eventMessage, "\n");
     // Skip the first line (text)
     _ = items.next();
