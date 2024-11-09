@@ -93,7 +93,7 @@ fn read(filter: []const u8) !void {
 
     while (true) {
         const bytesRead = (try reader.readUntilDelimiter(&buffer, '\n')).len;
-        const parsed = try std.json.parseFromSlice(LogStream, std.heap.page_allocator, buffer[0..bytesRead], .{ .ignore_unknown_fields = true });
+        const parsed = try std.json.parseFromSlice(LogStream, allocator, buffer[0..bytesRead], .{ .ignore_unknown_fields = true });
         defer parsed.deinit();
 
         var serviceType: TYPE = undefined;
@@ -107,6 +107,7 @@ fn read(filter: []const u8) !void {
             serviceType = TYPE.CAM_MIC_LOC;
             try processCamMicLoc(parsed.value, &tempServices);
         }
+
         {
             var activeServices = &switch (serviceType) {
                 TYPE.CAM_MIC_LOC => activeServices_cam_mic_loc,
@@ -122,8 +123,10 @@ fn read(filter: []const u8) !void {
                             break false;
                         }
                     } else true) {
-                        try stdout.print("New service: {s}\n", .{value});
-                        try activeServices.append(value);
+                        try stdout.print("{s},newService,{s}\n", .{ parsed.value.timestamp, value });
+                        const newStr = try allocator.alloc(u8, value.len);
+                        std.mem.copyForwards(u8, newStr, value);
+                        try activeServices.append(newStr);
                     }
                 }
             }
@@ -136,12 +139,17 @@ fn read(filter: []const u8) !void {
                             break false;
                         }
                     } else true) {
-                        try stdout.print("Expiring service: {s}\n", .{value});
+                        try stdout.print("{s},expiredService,{s}\n", .{ parsed.value.timestamp, value });
+
                         const removedItem = activeServices.swapRemove(idx);
                         allocator.free(removedItem);
                     }
                 }
             }
+        }
+
+        for (tempServices.items) |str| {
+            allocator.free(str);
         }
 
         tempServices.clearAndFree();
