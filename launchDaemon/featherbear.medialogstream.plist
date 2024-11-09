@@ -6,13 +6,14 @@
     <string>featherbear.medialogstream</string>
     <key>ProgramArguments</key>
     <array>
+      <!-- Need to figure out where to install this -->
       <string>/Users/awong6/Documents/Projects/logStream/zig-out/bin/mediaLogStream</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardErrorPath</key>
-    <string>/tmp/mediaLogStream.stderr.log</string>
+    <string>/var/log/mediaLogStream.stderr.log</string>
     <key>StandardOutPath</key>
-    <string>/tmp/mediaLogStream.stdout.log</string>
+    <string>/var/log/mediaLogStream.stdout.log</string>
   </dict>
 </plist>
