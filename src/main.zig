@@ -3,14 +3,12 @@ const ChildProcess = std.process.Child;
 
 const LogStream = struct { eventMessage: []const u8, timestamp: []const u8 };
 
-const allocator = std.heap.page_allocator;
-
 const stdout = std.io.getStdOut().writer();
 const stderr = std.io.getStdErr().writer();
 
 const PREFIX_SCREENSHARE = "screen:";
 
-fn processScreenShare(entry: LogStream, temp: *std.ArrayList([]const u8)) !void {
+fn processScreenShare(entry: LogStream, temp: *std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
     var items = std.mem.splitSequence(u8, entry.eventMessage, "\n");
     // Skip the first line (text)
     _ = items.next();
@@ -23,25 +21,27 @@ fn processScreenShare(entry: LogStream, temp: *std.ArrayList([]const u8)) !void 
         const item = itemDirty[startIdx..endIdx];
 
         const newStr = try allocator.alloc(u8, PREFIX_SCREENSHARE.len + item.len);
+
         std.mem.copyForwards(u8, newStr, PREFIX_SCREENSHARE);
         std.mem.copyForwards(u8, newStr[PREFIX_SCREENSHARE.len..], item);
         try temp.append(newStr);
     }
 }
 
-fn processScreenShareLegacy(entry: LogStream, temp: *std.ArrayList([]const u8)) !void {
+fn processScreenShareLegacy(entry: LogStream, temp: *std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
     var items = std.mem.splitSequence(u8, entry.eventMessage, "\n");
     // Skip the first line (text)
     _ = items.next();
     while (items.next()) |item| {
         const newStr = try allocator.alloc(u8, PREFIX_SCREENSHARE.len + item.len);
+
         std.mem.copyForwards(u8, newStr, PREFIX_SCREENSHARE);
         std.mem.copyForwards(u8, newStr[PREFIX_SCREENSHARE.len..], item);
         try temp.append(newStr);
     }
 }
 
-fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8)) !void {
+fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
     const prefix = "Active activity attributions changed to [";
     const extracted = entry.eventMessage[prefix.len .. entry.eventMessage.len - 1];
 
@@ -54,6 +54,7 @@ fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8)) !void {
             }
 
             const newStr = try allocator.alloc(u8, item.len);
+
             std.mem.copyForwards(u8, newStr, item);
 
             try temp.append(newStr);
@@ -63,7 +64,7 @@ fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8)) !void {
 
 const TYPE = enum { CAM_MIC_LOC, SCREEN, SCREEN_LEGACY };
 
-fn read(filter: []const u8) !void {
+fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
     var proc = ChildProcess.init(&[_][]const u8{ "/usr/bin/log", "stream", "--style", "ndjson", "--predicate", filter }, allocator);
     proc.stdout_behavior = ChildProcess.StdIo.Pipe;
     proc.stderr_behavior = ChildProcess.StdIo.Ignore;
@@ -99,13 +100,13 @@ fn read(filter: []const u8) !void {
         var serviceType: TYPE = undefined;
         if (std.mem.startsWith(u8, parsed.value.eventMessage, "Content sharing streams ")) {
             serviceType = TYPE.SCREEN;
-            try processScreenShare(parsed.value, &tempServices);
+            try processScreenShare(parsed.value, &tempServices, allocator);
         } else if (std.mem.startsWith(u8, parsed.value.eventMessage, "Legacy sharing bundle ids ")) {
             serviceType = TYPE.SCREEN_LEGACY;
-            try processScreenShareLegacy(parsed.value, &tempServices);
+            try processScreenShareLegacy(parsed.value, &tempServices, allocator);
         } else if (std.mem.startsWith(u8, parsed.value.eventMessage, "Active ")) {
             serviceType = TYPE.CAM_MIC_LOC;
-            try processCamMicLoc(parsed.value, &tempServices);
+            try processCamMicLoc(parsed.value, &tempServices, allocator);
         }
 
         {
@@ -125,6 +126,7 @@ fn read(filter: []const u8) !void {
                     } else true) {
                         try stdout.print("{s},newService,{s}\n", .{ parsed.value.timestamp, value });
                         const newStr = try allocator.alloc(u8, value.len);
+
                         std.mem.copyForwards(u8, newStr, value);
                         try activeServices.append(newStr);
                     }
@@ -153,13 +155,31 @@ fn read(filter: []const u8) !void {
         }
 
         tempServices.clearAndFree();
+
+        // {
+        //     var combined = try std.ArrayList([]const u8).initCapacity(allocator, activeServices_cam_mic_loc.items.len + activeServices_screen.items.len + activeServices_screen_legacy.items.len);
+        //     try combined.appendSlice(activeServices_cam_mic_loc.items);
+        //     try combined.appendSlice(activeServices_screen.items);
+        //     try combined.appendSlice(activeServices_screen_legacy.items);
+
+        //     for (combined.items, 0..) |item, idx| {
+        //         if (idx != 0) {
+        //             // try stdout.print(",");
+        //             try stdout.writeByte(',');
+        //         }
+        //         try stdout.print("{s}", .{item});
+        //     }
+        //     try stdout.writeByte('\n');
+        // }
     }
 }
 
 pub fn main() !void {
+    var allocatorBacking = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = allocatorBacking.allocator();
+
     // We only see new events - any existing consumers won't be detected until the next event
     // We could possibly perform a lookback with `log show`, or trigger an event by requesting a sensor
     // But, whatever.
-
-    try read("(subsystem == 'com.apple.controlcenter' && category == 'sensor-indicators' && formatString BEGINSWITH 'Active ') OR (subsystem == 'com.apple.controlcenter' && category == 'contentSharing')");
+    try read("(subsystem == 'com.apple.controlcenter' && category == 'sensor-indicators' && formatString BEGINSWITH 'Active ') OR (subsystem == 'com.apple.controlcenter' && category == 'contentSharing')", allocator);
 }
