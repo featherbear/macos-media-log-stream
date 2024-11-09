@@ -107,36 +107,39 @@ fn read(filter: []const u8) !void {
             serviceType = TYPE.CAM_MIC_LOC;
             try processCamMicLoc(parsed.value, &tempServices);
         }
-
-        var activeServices = &switch (serviceType) {
-            TYPE.CAM_MIC_LOC => activeServices_cam_mic_loc,
-            TYPE.SCREEN => activeServices_screen,
-            TYPE.SCREEN_LEGACY => activeServices_screen_legacy,
-        };
         {
-            for (tempServices.items) |value| {
-                if (for (activeServices.items) |valueB| {
-                    if (std.mem.eql(u8, value, valueB)) {
-                        break false;
+            var activeServices = &switch (serviceType) {
+                TYPE.CAM_MIC_LOC => activeServices_cam_mic_loc,
+                TYPE.SCREEN => activeServices_screen,
+                TYPE.SCREEN_LEGACY => activeServices_screen_legacy,
+            };
+
+            // Check for new services
+            {
+                for (tempServices.items) |value| {
+                    if (for (activeServices.items) |valueB| {
+                        if (std.mem.eql(u8, value, valueB)) {
+                            break false;
+                        }
+                    } else true) {
+                        try stdout.print("New service: {s}\n", .{value});
+                        try activeServices.append(value);
                     }
-                } else true) {
-                    try stdout.print("New service: {s}\n", .{value});
-                    try activeServices.append(value);
                 }
             }
-        }
 
-        // Check for removed services
-        {
-            for (activeServices.items, 0..) |value, idx| {
-                if (for (tempServices.items) |valueB| {
-                    if (std.mem.eql(u8, value, valueB)) {
-                        break false;
+            // Check for removed services
+            {
+                for (activeServices.items, 0..) |value, idx| {
+                    if (for (tempServices.items) |valueB| {
+                        if (std.mem.eql(u8, value, valueB)) {
+                            break false;
+                        }
+                    } else true) {
+                        try stdout.print("Expiring service: {s}\n", .{value});
+                        const removedItem = activeServices.swapRemove(idx);
+                        allocator.free(removedItem);
                     }
-                } else true) {
-                    try stdout.print("Expiring service: {s}\n", .{value});
-                    const removedItem = activeServices.swapRemove(idx);
-                    allocator.free(removedItem);
                 }
             }
         }
@@ -146,7 +149,9 @@ fn read(filter: []const u8) !void {
 }
 
 pub fn main() !void {
+    // We only see new events - any existing consumers won't be detected until the next event
+    // We could possibly perform a lookback with `log show`, or trigger an event by requesting a sensor
+    // But, whatever.
 
-    // We only see new events
     try read("(subsystem == 'com.apple.controlcenter' && category == 'sensor-indicators' && formatString BEGINSWITH 'Active ') OR (subsystem == 'com.apple.controlcenter' && category == 'contentSharing')");
 }
