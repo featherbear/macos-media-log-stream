@@ -6,4 +6,3 @@ A wrapper over the `/usr/bin/log` binary to aid in monitoring application use of
 
 * `zig run ./src/main.zig`
 * `zig build`
-
