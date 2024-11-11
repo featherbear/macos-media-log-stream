@@ -43,6 +43,71 @@ fn processScreenRecordLegacy(entry: LogStream, temp: *std.ArrayList([]const u8),
     }
 }
 
+fn processScreenRecordInbuilt(entry: LogStream, temp: *std.ArrayList([]const u8), source: std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
+    // WARN: The PID might not exist for the stop event since it might have closed already
+
+    const pid = entry.processID;
+    const ppid = processUtil.getppid_of_pid(pid);
+    const ppid_path = processUtil.image_path_of_pid(ppid);
+
+    const RecordingType = enum(u8) { Unknown, QuickTimePlayer, System };
+    var recordingType = RecordingType.Unknown;
+    if (std.mem.eql(u8, ppid_path, "/System/Library/CoreServices/SystemUIServer.app/Contents/MacOS/SystemUIServer")) {
+        recordingType = RecordingType.System;
+    } else if (std.mem.eql(u8, ppid_path, "/System/Applications/QuickTime Player.app/Contents/XPCServices/com.apple.quicktimeplayer.SharedPrefsVendor.xpc/Contents/MacOS/com.apple.quicktimeplayer.SharedPrefsVendor")) {
+        recordingType = RecordingType.QuickTimePlayer;
+    }
+
+    // temp should result in a list of ALL active services.
+    // Therefore get the existing active entries
+    for (source.items) |item| {
+        const newStr = try allocator.alloc(u8, item.len);
+        std.mem.copyForwards(u8, newStr, item);
+        try temp.append(newStr);
+    }
+
+    if (recordingType == RecordingType.Unknown) {
+        // QuickTime Player's recorder and Cmd + Shift + 5 both share a mutex lock, so you can only use one or the other.
+        // But you can manually call `/usr/sbin/screencapture -v ...`
+        // We skip these cases because the other screen recording detections should pick them up
+        return;
+    }
+
+    const service = try std.fmt.allocPrint(allocator, "{s}{s}", .{
+        PREFIX_SCREENSHARE, switch (recordingType) {
+            RecordingType.Unknown => "unknown",
+            RecordingType.QuickTimePlayer => "quicktime",
+            RecordingType.System => "system",
+        },
+    });
+
+    if (std.mem.indexOf(u8, entry.eventMessage, "start") != null) {
+        try temp.append(service);
+        return;
+    }
+
+    if (std.mem.indexOf(u8, entry.eventMessage, "stop") != null) {
+        var foundIdx: ?usize = null;
+        for (temp.items, 0..) |value, idx| {
+            if (std.mem.eql(u8, value, service)) {
+                foundIdx = idx;
+                break;
+            }
+        }
+
+        if (foundIdx != null) {
+            const removed = temp.swapRemove(foundIdx.?);
+            allocator.free(removed);
+        }
+    } else {
+        try stdout.print("UHMMMMM\n", .{});
+        // TBH should panic at this point
+        // uh oh
+    }
+
+    allocator.free(service);
+}
+
 fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
     const prefix = "Active activity attributions changed to [";
     const extracted = entry.eventMessage[prefix.len .. entry.eventMessage.len - 1];
@@ -113,62 +178,7 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
             try processScreenRecordLegacy(parsed.value, &tempServices, allocator);
         } else if (std.mem.eql(u8, parsed.value.subsystem, "com.apple.screencapture")) {
             serviceType = TYPE.SCREEN_INBUILT;
-
-            const pid = parsed.value.processID;
-            const ppid = processUtil.getppid_of_pid(pid);
-            const ppid_path = processUtil.image_path_of_pid(ppid);
-
-            const RecordingType = enum(u8) { Unknown, QuickTimePlayer, System };
-            var recordingType = RecordingType.Unknown;
-
-            if (std.mem.eql(u8, ppid_path, "/System/Library/CoreServices/SystemUIServer.app/Contents/MacOS/SystemUIServer")) {
-                recordingType = RecordingType.System;
-            } else if (std.mem.eql(u8, ppid_path, "/System/Applications/QuickTime Player.app/Contents/XPCServices/com.apple.quicktimeplayer.SharedPrefsVendor.xpc/Contents/MacOS/com.apple.quicktimeplayer.SharedPrefsVendor")) {
-                recordingType = RecordingType.QuickTimePlayer;
-            }
-
-            // WARN: The PID might not exist for the stop event since it might have closed already
-
-            if (recordingType == RecordingType.Unknown) {
-                // QuickTime Player's recorder and Cmd + Shift + 5 both share some sort of lock, you can only use one or the other.
-                // But you can manually call `/usr/sbin/screencapture -v ...`
-                // We skip these other cases because the other screen recording detections should pick it up
-                continue;
-            }
-
-            const service = try std.fmt.allocPrint(allocator, "{s}{s}", .{
-                PREFIX_SCREENSHARE, switch (recordingType) {
-                    RecordingType.Unknown => "unknown",
-                    RecordingType.QuickTimePlayer => "quicktime",
-                    RecordingType.System => "system",
-                },
-            });
-
-            for (activeServices_screen_inbuilt.items) |item| {
-                const newStr = try allocator.alloc(u8, item.len);
-                std.mem.copyForwards(u8, newStr, item);
-                try tempServices.append(newStr);
-            }
-
-            if (std.mem.indexOf(u8, parsed.value.eventMessage, "start") != null) {
-                try tempServices.append(service);
-            } else if (std.mem.indexOf(u8, parsed.value.eventMessage, "stop") != null) {
-                var foundIdx: ?usize = null;
-                for (tempServices.items, 0..) |value, idx| {
-                    if (std.mem.eql(u8, value, service)) {
-                        foundIdx = idx;
-                        break;
-                    }
-                }
-
-                if (foundIdx != null) {
-                    const removed = tempServices.swapRemove(foundIdx.?);
-                    allocator.free(removed);
-                }
-            } else {
-                try stdout.print("UHMMMMM\n", .{});
-                // uh oh
-            }
+            try processScreenRecordInbuilt(parsed.value, &tempServices, activeServices_screen_inbuilt, allocator);
         }
 
         {
