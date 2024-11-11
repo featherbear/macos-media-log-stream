@@ -36,6 +36,11 @@ fn processScreenShareLegacy(entry: LogStream, temp: *std.ArrayList([]const u8), 
 
     var items = std.mem.splitSequence(u8, entry.eventMessage[newLineIndex.? + 1 ..], ", ");
     while (items.next()) |item| {
+        // TODO: make an ignore file, or program args?
+        if (std.mem.eql(u8, item, "com.lwouis.alt-tab-macos")) {
+            continue;
+        }
+
         const newStr = try allocator.alloc(u8, PREFIX_SCREENSHARE.len + item.len);
 
         std.mem.copyForwards(u8, newStr, PREFIX_SCREENSHARE);
