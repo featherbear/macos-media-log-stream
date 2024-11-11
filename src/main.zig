@@ -29,9 +29,12 @@ fn processScreenShare(entry: LogStream, temp: *std.ArrayList([]const u8), alloca
 }
 
 fn processScreenShareLegacy(entry: LogStream, temp: *std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
-    var items = std.mem.splitSequence(u8, entry.eventMessage, "\n");
-    // Skip the first line (text)
-    _ = items.next();
+    const newLineIndex = std.mem.indexOf(u8, entry.eventMessage, "\n");
+    if (newLineIndex == null) {
+        return;
+    }
+
+    var items = std.mem.splitSequence(u8, entry.eventMessage[newLineIndex.? + 1 ..], ", ");
     while (items.next()) |item| {
         const newStr = try allocator.alloc(u8, PREFIX_SCREENSHARE.len + item.len);
 
