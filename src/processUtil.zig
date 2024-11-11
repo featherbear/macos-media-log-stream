@@ -3,6 +3,7 @@
 const c = @cImport({
     // @compileError("You need to link with libproc on macOS");
     @cInclude("libproc.h");
+    @cInclude("unistd.h");
 });
 const std = @import("std");
 
@@ -15,22 +16,26 @@ fn proc_pidinfo(pid: c.pid_t) c.struct_proc_bsdshortinfo {
 }
 
 pub fn getpid() c.pid_t {
-    const result = asm volatile ("svc #0x80"
-        : [ret] "={x0}" (-> c.pid_t),
-        : [syscallNo] "{x16}" (20),
-        : "x0", "x16"
-    );
-    return @intCast(result);
+    // Wait a second...
+    return c.getpid();
+
+    // const result = asm volatile ("svc #0x80"
+    //     : [ret] "={x0}" (-> c.pid_t),
+    //     : [syscallNo] "{x16}" (20),
+    //     : "x0", "x16"
+    // );
+    // return @intCast(result);
 }
 
 pub fn getppid() c.pid_t {
-    const result = asm volatile ("svc #0x80"
-        : [ret] "={x0}" (-> c.pid_t),
-        : [syscallNo] "{x16}" (39),
-        : "x0", "x16"
-    );
+    return c.getppid();
 
-    return @intCast(result);
+    // const result = asm volatile ("svc #0x80"
+    //     : [ret] "={x0}" (-> c.pid_t),
+    //     : [syscallNo] "{x16}" (39),
+    //     : "x0", "x16"
+    // );
+    // return @intCast(result);
 }
 
 pub fn getppid_of_pid(pid: c.pid_t) c.pid_t {
