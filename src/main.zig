@@ -28,6 +28,10 @@ fn processScreenShare(entry: LogStream, temp: *std.ArrayList([]const u8), alloca
     }
 }
 
+// fn getProInfo(n: u32) void {
+//     std.macho.sysc;
+// }
+
 fn processScreenShareLegacy(entry: LogStream, temp: *std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
     const newLineIndex = std.mem.indexOf(u8, entry.eventMessage, "\n");
     if (newLineIndex == null) {
@@ -182,12 +186,23 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
     }
 }
 
+const processUtil = @import("./processUtil.zig");
+
 pub fn main() !void {
     var allocatorBacking = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = allocatorBacking.allocator();
 
-    // We only see new events - any existing consumers won't be detected until the next event
-    // We could possibly perform a lookback with `log show`, or trigger an event by requesting a sensor
-    // But, whatever.
-    try read("(subsystem == 'com.apple.controlcenter' && category == 'sensor-indicators' && formatString BEGINSWITH 'Active ') OR (subsystem == 'com.apple.controlcenter' && category == 'contentSharing')", allocator);
+    if (false) {
+        // We only see new events - any existing consumers won't be detected until the next event
+        // We could possibly perform a lookback with `log show`, or trigger an event by requesting a sensor
+        // But, whatever.
+        try read("(subsystem == 'com.apple.controlcenter' && category == 'sensor-indicators' && formatString BEGINSWITH 'Active ') OR (subsystem == 'com.apple.controlcenter' && category == 'contentSharing')", allocator);
+    }
+
+    const pid = processUtil.getpid();
+    std.debug.print("PID: {d} | syscall PPID: {d}\n", .{ pid, processUtil.getppid() });
+    std.debug.print("PID: {d} | libproc PPID: {d}\n", .{ pid, processUtil.getppid_of_pid(pid) });
+
+    std.debug.print("Path: {s}\n", .{processUtil.temp_image_path_of_pid(pid)});
+    std.debug.print("CWD: {s}\n", .{processUtil.temp_cwd_of_pid(pid)});
 }
