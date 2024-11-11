@@ -1,7 +1,7 @@
 const std = @import("std");
 const ChildProcess = std.process.Child;
 
-const LogStream = struct { eventMessage: []const u8, timestamp: []const u8 };
+const LogStream = struct { eventMessage: []const u8, subsystem: []const u8, processID: c_int, timestamp: []const u8 };
 
 const stdout = std.io.getStdOut().writer();
 const stderr = std.io.getStdErr().writer();
@@ -20,17 +20,10 @@ fn processScreenShare(entry: LogStream, temp: *std.ArrayList([]const u8), alloca
 
         const item = itemDirty[startIdx..endIdx];
 
-        const newStr = try allocator.alloc(u8, PREFIX_SCREENSHARE.len + item.len);
-
-        std.mem.copyForwards(u8, newStr, PREFIX_SCREENSHARE);
-        std.mem.copyForwards(u8, newStr[PREFIX_SCREENSHARE.len..], item);
+        const newStr = try std.fmt.allocPrint(allocator, "{s}{s}", .{ PREFIX_SCREENSHARE, item });
         try temp.append(newStr);
     }
 }
-
-// fn getProInfo(n: u32) void {
-//     std.macho.sysc;
-// }
 
 fn processScreenShareLegacy(entry: LogStream, temp: *std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
     const newLineIndex = std.mem.indexOf(u8, entry.eventMessage, "\n");
@@ -45,10 +38,7 @@ fn processScreenShareLegacy(entry: LogStream, temp: *std.ArrayList([]const u8), 
             continue;
         }
 
-        const newStr = try allocator.alloc(u8, PREFIX_SCREENSHARE.len + item.len);
-
-        std.mem.copyForwards(u8, newStr, PREFIX_SCREENSHARE);
-        std.mem.copyForwards(u8, newStr[PREFIX_SCREENSHARE.len..], item);
+        const newStr = try std.fmt.allocPrint(allocator, "{s}{s}", .{ PREFIX_SCREENSHARE, item });
         try temp.append(newStr);
     }
 }
@@ -66,7 +56,6 @@ fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8), allocato
             }
 
             const newStr = try allocator.alloc(u8, item.len);
-
             std.mem.copyForwards(u8, newStr, item);
 
             try temp.append(newStr);
@@ -74,7 +63,7 @@ fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8), allocato
     }
 }
 
-const TYPE = enum { CAM_MIC_LOC, SCREEN, SCREEN_LEGACY };
+const TYPE = enum { CAM_MIC_LOC, SCREEN, SCREEN_LEGACY, SCREEN_INBUILT };
 
 fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
     var proc = ChildProcess.init(&[_][]const u8{ "/usr/bin/log", "stream", "--style", "ndjson", "--predicate", filter }, allocator);
@@ -101,6 +90,9 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
     var activeServices_screen_legacy = try std.ArrayList([]const u8).initCapacity(allocator, 5);
     defer activeServices_screen_legacy.deinit();
 
+    var activeServices_screen_inbuilt = try std.ArrayList([]const u8).initCapacity(allocator, 5);
+    defer activeServices_screen_inbuilt.deinit();
+
     var tempServices = try std.ArrayList([]const u8).initCapacity(allocator, 5);
     defer tempServices.deinit();
 
@@ -110,15 +102,73 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
         defer parsed.deinit();
 
         var serviceType: TYPE = undefined;
-        if (std.mem.startsWith(u8, parsed.value.eventMessage, "Content sharing streams ")) {
+        if (std.mem.startsWith(u8, parsed.value.eventMessage, "Active ")) {
+            serviceType = TYPE.CAM_MIC_LOC;
+            try processCamMicLoc(parsed.value, &tempServices, allocator);
+        } else if (std.mem.startsWith(u8, parsed.value.eventMessage, "Content sharing streams ")) {
             serviceType = TYPE.SCREEN;
             try processScreenShare(parsed.value, &tempServices, allocator);
         } else if (std.mem.startsWith(u8, parsed.value.eventMessage, "Legacy sharing bundle ids ")) {
             serviceType = TYPE.SCREEN_LEGACY;
             try processScreenShareLegacy(parsed.value, &tempServices, allocator);
-        } else if (std.mem.startsWith(u8, parsed.value.eventMessage, "Active ")) {
-            serviceType = TYPE.CAM_MIC_LOC;
-            try processCamMicLoc(parsed.value, &tempServices, allocator);
+        } else if (std.mem.eql(u8, parsed.value.subsystem, "com.apple.screencapture")) {
+            serviceType = TYPE.SCREEN_INBUILT;
+
+            const pid = parsed.value.processID;
+            const ppid = processUtil.getppid_of_pid(pid);
+            const ppid_path = processUtil.image_path_of_pid(ppid);
+
+            const RecordingType = enum(u8) { Unknown, QuickTimePlayer, System };
+            var recordingType = RecordingType.Unknown;
+
+            if (std.mem.eql(u8, ppid_path, "/System/Library/CoreServices/SystemUIServer.app/Contents/MacOS/SystemUIServer")) {
+                recordingType = RecordingType.System;
+            } else if (std.mem.eql(u8, ppid_path, "/System/Applications/QuickTime Player.app/Contents/XPCServices/com.apple.quicktimeplayer.SharedPrefsVendor.xpc/Contents/MacOS/com.apple.quicktimeplayer.SharedPrefsVendor")) {
+                recordingType = RecordingType.QuickTimePlayer;
+            }
+
+            // WARN: The PID might not exist for the stop event since it might have closed already
+
+            if (recordingType == RecordingType.Unknown) {
+                // QuickTime Player's recorder and Cmd + Shift + 5 both share some sort of lock, you can only use one or the other.
+                // But you can manually call `/usr/sbin/screencapture -v ...`
+                // We skip these other cases because the other screen recording detections should pick it up
+                continue;
+            }
+
+            const service = try std.fmt.allocPrint(allocator, "{s}{s}", .{
+                PREFIX_SCREENSHARE, switch (recordingType) {
+                    RecordingType.Unknown => "unknown",
+                    RecordingType.QuickTimePlayer => "quicktime",
+                    RecordingType.System => "system",
+                },
+            });
+
+            for (activeServices_screen_inbuilt.items) |item| {
+                const newStr = try allocator.alloc(u8, item.len);
+                std.mem.copyForwards(u8, newStr, item);
+                try tempServices.append(newStr);
+            }
+
+            if (std.mem.indexOf(u8, parsed.value.eventMessage, "start") != null) {
+                try tempServices.append(service);
+            } else if (std.mem.indexOf(u8, parsed.value.eventMessage, "stop") != null) {
+                var foundIdx: ?usize = null;
+                for (tempServices.items, 0..) |value, idx| {
+                    if (std.mem.eql(u8, value, service)) {
+                        foundIdx = idx;
+                        break;
+                    }
+                }
+
+                if (foundIdx != null) {
+                    const removed = tempServices.swapRemove(foundIdx.?);
+                    allocator.free(removed);
+                }
+            } else {
+                try stdout.print("UHMMMMM\n", .{});
+                // uh oh
+            }
         }
 
         {
@@ -126,6 +176,7 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
                 TYPE.CAM_MIC_LOC => activeServices_cam_mic_loc,
                 TYPE.SCREEN => activeServices_screen,
                 TYPE.SCREEN_LEGACY => activeServices_screen_legacy,
+                TYPE.SCREEN_INBUILT => activeServices_screen_inbuilt,
             };
 
             // Check for new services
@@ -137,9 +188,10 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
                         }
                     } else true) {
                         try stdout.print("{s},newService,{s}\n", .{ parsed.value.timestamp, value });
-                        const newStr = try allocator.alloc(u8, value.len);
 
+                        const newStr = try allocator.alloc(u8, value.len);
                         std.mem.copyForwards(u8, newStr, value);
+
                         try activeServices.append(newStr);
                     }
                 }
@@ -192,17 +244,14 @@ pub fn main() !void {
     var allocatorBacking = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = allocatorBacking.allocator();
 
-    if (false) {
+    if (true) {
         // We only see new events - any existing consumers won't be detected until the next event
         // We could possibly perform a lookback with `log show`, or trigger an event by requesting a sensor
         // But, whatever.
-        try read("(subsystem == 'com.apple.controlcenter' && category == 'sensor-indicators' && formatString BEGINSWITH 'Active ') OR (subsystem == 'com.apple.controlcenter' && category == 'contentSharing')", allocator);
+        try read(
+            \\(subsystem == 'com.apple.controlcenter' && category == 'sensor-indicators' && formatString BEGINSWITH 'Active ')
+            \\OR (subsystem == 'com.apple.controlcenter' && category == 'contentSharing')
+            \\OR (subsystem == 'com.apple.screencapture' && formatString BEGINSWITH 'sampleBuffer: ')
+        , allocator);
     }
-
-    const pid = processUtil.getpid();
-    std.debug.print("PID: {d} | syscall PPID: {d}\n", .{ pid, processUtil.getppid() });
-    std.debug.print("PID: {d} | libproc PPID: {d}\n", .{ pid, processUtil.getppid_of_pid(pid) });
-
-    std.debug.print("Path: {s}\n", .{processUtil.temp_image_path_of_pid(pid)});
-    std.debug.print("CWD: {s}\n", .{processUtil.temp_cwd_of_pid(pid)});
 }

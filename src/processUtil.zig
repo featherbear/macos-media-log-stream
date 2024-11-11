@@ -1,9 +1,7 @@
 // https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/syscalls.master
 
 const c = @cImport({
-    // @compileError("You need to link with libproc on macOS");
     @cInclude("libproc.h");
-    @cInclude("unistd.h");
 });
 const std = @import("std");
 
@@ -42,7 +40,7 @@ pub fn getppid_of_pid(pid: c.pid_t) c.pid_t {
     return @intCast(proc_pidinfo(pid).pbsi_ppid);
 }
 
-pub fn temp_image_path_of_pid(pid: c.pid_t) []u8 {
+pub fn image_path_of_pid(pid: c.pid_t) []u8 {
     var s: [c.PROC_PIDPATHINFO_MAXSIZE]u8 = undefined;
     const r = @as(usize, @intCast(c.proc_pidpath(pid, &s, c.PROC_PIDPATHINFO_MAXSIZE)));
     return s[0..r];
@@ -62,9 +60,26 @@ pub fn temp_image_name_of_pid(pid: c.pid_t) []u8 {
 pub fn temp_cwd_of_pid(pid: c.pid_t) []u8 {
     var t: c.struct_proc_vnodepathinfo = undefined;
     const r = c.proc_pidinfo(pid, c.PROC_PIDVNODEPATHINFO, 0, &t, c.PROC_PIDVNODEPATHINFO_SIZE);
-    _ = r;
+
+    if (r == 0) {
+        return "";
+    }
 
     // pvi_cdir current
     // pvi_rdir root
     return t.pvi_cdir.vip_path[0..std.mem.indexOf(u8, &t.pvi_cdir.vip_path, "\x00").?];
+}
+
+pub fn temp_tracePID(pid: c.pid_t) void {
+    var _pid = pid;
+    while (_pid != 0) {
+        const ppid = getppid_of_pid(_pid);
+        std.debug.print("PID: {d} | libproc PPID: {d}\n", .{ _pid, ppid });
+
+        std.debug.print("Path: {s}\n", .{image_path_of_pid(_pid)});
+        std.debug.print("CWD: {s}\n", .{temp_cwd_of_pid(_pid)});
+        _pid = ppid;
+
+        std.debug.print("\n", .{});
+    }
 }
