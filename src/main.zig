@@ -146,19 +146,18 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
 
     try stderr.print("Observing events...\n", .{});
 
-    var activeServices_cam_mic_loc = try std.ArrayList([]const u8).initCapacity(allocator, 5);
-    defer activeServices_cam_mic_loc.deinit();
-
-    var activeServices_screen = try std.ArrayList([]const u8).initCapacity(allocator, 5);
-    defer activeServices_screen.deinit();
-
-    var activeServices_screen_legacy = try std.ArrayList([]const u8).initCapacity(allocator, 5);
-    defer activeServices_screen_legacy.deinit();
-
-    var activeServices_screen_inbuilt = try std.ArrayList([]const u8).initCapacity(allocator, 5);
-    defer activeServices_screen_inbuilt.deinit();
-
+    var activeServices = struct { cam_mic_loc: std.ArrayList([]const u8), screen: std.ArrayList([]const u8), screen_legacy: std.ArrayList([]const u8), screen_inbuilt: std.ArrayList([]const u8) }{
+        .cam_mic_loc = try std.ArrayList([]const u8).initCapacity(allocator, 5),
+        .screen = try std.ArrayList([]const u8).initCapacity(allocator, 5),
+        .screen_legacy = try std.ArrayList([]const u8).initCapacity(allocator, 5),
+        .screen_inbuilt = try std.ArrayList([]const u8).initCapacity(allocator, 5),
+    };
     var tempServices = try std.ArrayList([]const u8).initCapacity(allocator, 5);
+
+    defer activeServices.cam_mic_loc.deinit();
+    defer activeServices.screen.deinit();
+    defer activeServices.screen_legacy.deinit();
+    defer activeServices.screen_inbuilt.deinit();
     defer tempServices.deinit();
 
     while (true) {
@@ -178,21 +177,21 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
             try processScreenRecordLegacy(parsed.value, &tempServices, allocator);
         } else if (std.mem.eql(u8, parsed.value.subsystem, "com.apple.screencapture")) {
             serviceType = TYPE.SCREEN_INBUILT;
-            try processScreenRecordInbuilt(parsed.value, &tempServices, activeServices_screen_inbuilt, allocator);
+            try processScreenRecordInbuilt(parsed.value, &tempServices, activeServices.screen_inbuilt, allocator);
         }
 
         {
-            var activeServices = &switch (serviceType) {
-                TYPE.CAM_MIC_LOC => activeServices_cam_mic_loc,
-                TYPE.SCREEN => activeServices_screen,
-                TYPE.SCREEN_LEGACY => activeServices_screen_legacy,
-                TYPE.SCREEN_INBUILT => activeServices_screen_inbuilt,
+            var activeService = &switch (serviceType) {
+                TYPE.CAM_MIC_LOC => activeServices.cam_mic_loc,
+                TYPE.SCREEN => activeServices.screen,
+                TYPE.SCREEN_LEGACY => activeServices.screen_legacy,
+                TYPE.SCREEN_INBUILT => activeServices.screen_inbuilt,
             };
 
             // Check for new services
             {
                 for (tempServices.items) |value| {
-                    if (for (activeServices.items) |valueB| {
+                    if (for (activeService.items) |valueB| {
                         if (std.mem.eql(u8, value, valueB)) {
                             break false;
                         }
@@ -202,14 +201,14 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
                         const newStr = try allocator.alloc(u8, value.len);
                         std.mem.copyForwards(u8, newStr, value);
 
-                        try activeServices.append(newStr);
+                        try activeService.append(newStr);
                     }
                 }
             }
 
             // Check for removed services
             {
-                for (activeServices.items, 0..) |value, idx| {
+                for (activeService.items, 0..) |value, idx| {
                     if (for (tempServices.items) |valueB| {
                         if (std.mem.eql(u8, value, valueB)) {
                             break false;
@@ -217,7 +216,7 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
                     } else true) {
                         try stdout.print("{s},expiredService,{s}\n", .{ parsed.value.timestamp, value });
 
-                        const removedItem = activeServices.swapRemove(idx);
+                        const removedItem = activeService.swapRemove(idx);
                         allocator.free(removedItem);
                     }
                 }
