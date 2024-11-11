@@ -8,7 +8,7 @@ const stderr = std.io.getStdErr().writer();
 
 const PREFIX_SCREENSHARE = "screen:";
 
-fn processScreenShare(entry: LogStream, temp: *std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
+fn processScreenRecord(entry: LogStream, temp: *std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
     var items = std.mem.splitSequence(u8, entry.eventMessage, "\n");
     // Skip the first line (text)
     _ = items.next();
@@ -25,7 +25,7 @@ fn processScreenShare(entry: LogStream, temp: *std.ArrayList([]const u8), alloca
     }
 }
 
-fn processScreenShareLegacy(entry: LogStream, temp: *std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
+fn processScreenRecordLegacy(entry: LogStream, temp: *std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
     const newLineIndex = std.mem.indexOf(u8, entry.eventMessage, "\n");
     if (newLineIndex == null) {
         return;
@@ -107,10 +107,10 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
             try processCamMicLoc(parsed.value, &tempServices, allocator);
         } else if (std.mem.startsWith(u8, parsed.value.eventMessage, "Content sharing streams ")) {
             serviceType = TYPE.SCREEN;
-            try processScreenShare(parsed.value, &tempServices, allocator);
+            try processScreenRecord(parsed.value, &tempServices, allocator);
         } else if (std.mem.startsWith(u8, parsed.value.eventMessage, "Legacy sharing bundle ids ")) {
             serviceType = TYPE.SCREEN_LEGACY;
-            try processScreenShareLegacy(parsed.value, &tempServices, allocator);
+            try processScreenRecordLegacy(parsed.value, &tempServices, allocator);
         } else if (std.mem.eql(u8, parsed.value.subsystem, "com.apple.screencapture")) {
             serviceType = TYPE.SCREEN_INBUILT;
 
