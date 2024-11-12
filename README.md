@@ -4,7 +4,8 @@ A wrapper over the `/usr/bin/log` binary to aid in monitoring application use of
 
 ---
 
-* `zig run ./src/main.zig`
+* `zig run ./src/main.zig <ignoredService> <ignoredService>`
+  * e.g. `./app "loc:System Services" screen:com.lwouis.alt-tab-macos`
 * `zig build`
 
 ---
