@@ -33,11 +33,6 @@ fn processScreenRecordLegacy(entry: LogStream, temp: *std.ArrayList([]const u8),
 
     var items = std.mem.splitSequence(u8, entry.eventMessage[newLineIndex.? + 1 ..], ", ");
     while (items.next()) |item| {
-        // TODO: make an ignore file, or program args?
-        if (std.mem.eql(u8, item, "com.lwouis.alt-tab-macos")) {
-            continue;
-        }
-
         const newStr = try std.fmt.allocPrint(allocator, "{s}{s}", .{ PREFIX_SCREENSHARE, item });
         try temp.append(newStr);
     }
@@ -87,14 +82,7 @@ fn processScreenRecordInbuilt(entry: LogStream, temp: *std.ArrayList([]const u8)
     }
 
     if (std.mem.indexOf(u8, entry.eventMessage, "stop") != null) {
-        var foundIdx: ?usize = null;
-        for (temp.items, 0..) |value, idx| {
-            if (std.mem.eql(u8, value, service)) {
-                foundIdx = idx;
-                break;
-            }
-        }
-
+        const foundIdx = strContains(u8, temp.items, service);
         if (foundIdx != null) {
             const removed = temp.swapRemove(foundIdx.?);
             allocator.free(removed);
@@ -116,9 +104,6 @@ fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8), allocato
         var items = std.mem.splitSequence(u8, extracted, ", ");
         while (items.next()) |itemDirty| {
             const item = itemDirty[1 .. itemDirty.len - 1];
-            if (std.mem.eql(u8, item, "loc:System Services")) {
-                continue;
-            }
 
             const newStr = try allocator.alloc(u8, item.len);
             std.mem.copyForwards(u8, newStr, item);
@@ -130,7 +115,7 @@ fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8), allocato
 
 const TYPE = enum { CAM_MIC_LOC, SCREEN, SCREEN_LEGACY, SCREEN_INBUILT };
 
-fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
+fn read(filter: []const u8, ignored: *std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
     var proc = ChildProcess.init(&[_][]const u8{ "/usr/bin/log", "stream", "--style", "ndjson", "--predicate", filter }, allocator);
     proc.stdout_behavior = ChildProcess.StdIo.Pipe;
     proc.stderr_behavior = ChildProcess.StdIo.Ignore;
@@ -180,6 +165,21 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
             try processScreenRecordInbuilt(parsed.value, &tempServices, activeServices.screen_inbuilt, allocator);
         }
 
+        // Remove ignored services
+        {
+            var remainingChecks = tempServices.items.len;
+            var idx: usize = 0;
+            while (remainingChecks > 0) {
+                if (strContains(u8, ignored.items, tempServices.items[idx]) != null) {
+                    const removed = tempServices.swapRemove(idx);
+                    allocator.free(removed);
+                } else {
+                    idx += 1;
+                }
+                remainingChecks -= 1;
+            }
+        }
+
         {
             var activeService = &switch (serviceType) {
                 TYPE.CAM_MIC_LOC => activeServices.cam_mic_loc,
@@ -191,11 +191,7 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
             // Check for new services
             {
                 for (tempServices.items) |value| {
-                    if (for (activeService.items) |valueB| {
-                        if (std.mem.eql(u8, value, valueB)) {
-                            break false;
-                        }
-                    } else true) {
+                    if (strContains(u8, activeService.items, value) == null) {
                         try stdout.print("{s},newService,{s}\n", .{ parsed.value.timestamp, value });
 
                         const newStr = try allocator.alloc(u8, value.len);
@@ -209,15 +205,14 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
             // Check for removed services
             {
                 for (activeService.items, 0..) |value, idx| {
-                    if (for (tempServices.items) |valueB| {
-                        if (std.mem.eql(u8, value, valueB)) {
-                            break false;
-                        }
-                    } else true) {
+                    if (strContains(u8, tempServices.items, value) == null) {
                         try stdout.print("{s},expiredService,{s}\n", .{ parsed.value.timestamp, value });
 
                         const removedItem = activeService.swapRemove(idx);
                         allocator.free(removedItem);
+
+                        // Iterate just once
+                        break;
                     }
                 }
             }
@@ -249,9 +244,31 @@ fn read(filter: []const u8, allocator: std.mem.Allocator) !void {
 
 const processUtil = @import("./processUtil.zig");
 
+fn strContains(comptime T: type, haystack: [][]const T, needle: []const T) ?usize {
+    for (haystack, 0..) |haystackItem, idx| {
+        if (std.mem.eql(T, haystackItem, needle)) {
+            return idx;
+        }
+    } else {
+        return null;
+    }
+}
+
 pub fn main() !void {
     var allocatorBacking = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = allocatorBacking.allocator();
+
+    var args = try std.process.argsWithAllocator(allocator);
+    defer args.deinit();
+
+    var ignoredApplications = std.ArrayList([]const u8).init(allocator);
+
+    try stderr.print("--------------------\n", .{});
+    _ = args.next();
+    while (args.next()) |ignored| {
+        try stderr.print("Ignoring {s}\n", .{ignored});
+        try ignoredApplications.append(ignored);
+    }
 
     if (true) {
         // We only see new events - any existing consumers won't be detected until the next event
@@ -261,6 +278,6 @@ pub fn main() !void {
             \\(subsystem == 'com.apple.controlcenter' && category == 'sensor-indicators' && formatString BEGINSWITH 'Active ')
             \\OR (subsystem == 'com.apple.controlcenter' && category == 'contentSharing')
             \\OR (subsystem == 'com.apple.screencapture' && formatString BEGINSWITH 'sampleBuffer: ')
-        , allocator);
+        , &ignoredApplications, allocator);
     }
 }
