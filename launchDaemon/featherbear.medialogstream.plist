@@ -8,6 +8,8 @@
     <array>
       <!-- Need to figure out where to install this -->
       <string>/Users/awong6/Documents/Projects/logStream/zig-out/bin/mediaLogStream</string>
+      <string>loc:System Services</string>
+      <string>screen:com.lwouis.alt-tab-macos</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
