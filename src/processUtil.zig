@@ -15,25 +15,25 @@ fn proc_pidinfo(pid: c.pid_t) c.struct_proc_bsdshortinfo {
 
 pub fn getpid() c.pid_t {
     // Wait a second...
-    return c.getpid();
+    // return c.getpid();
 
-    // const result = asm volatile ("svc #0x80"
-    //     : [ret] "={x0}" (-> c.pid_t),
-    //     : [syscallNo] "{x16}" (20),
-    //     : "x0", "x16"
-    // );
-    // return @intCast(result);
+    const result = asm volatile ("svc #0x80"
+        : [ret] "={x0}" (-> c.pid_t),
+        : [syscallNo] "{x16}" (20),
+        : "x0", "x16"
+    );
+    return @intCast(result);
 }
 
 pub fn getppid() c.pid_t {
-    return c.getppid();
+    // return c.getppid();
 
-    // const result = asm volatile ("svc #0x80"
-    //     : [ret] "={x0}" (-> c.pid_t),
-    //     : [syscallNo] "{x16}" (39),
-    //     : "x0", "x16"
-    // );
-    // return @intCast(result);
+    const result = asm volatile ("svc #0x80"
+        : [ret] "={x0}" (-> c.pid_t),
+        : [syscallNo] "{x16}" (39),
+        : "x0", "x16"
+    );
+    return @intCast(result);
 }
 
 pub fn getppid_of_pid(pid: c.pid_t) c.pid_t {
