@@ -1,2 +1,2 @@
-#!/bin/zsh
+#!/bin/sh
 zig build --release=small
