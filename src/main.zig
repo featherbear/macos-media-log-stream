@@ -115,7 +115,7 @@ fn processCamMicLoc(entry: LogStream, temp: *std.ArrayList([]const u8), allocato
 
 const TYPE = enum { CAM_MIC_LOC, SCREEN, SCREEN_LEGACY, SCREEN_INBUILT };
 
-fn read(filter: []const u8, ignored: *std.ArrayList([]const u8), allocator: std.mem.Allocator) !void {
+fn read(allocator: std.mem.Allocator, filter: []const u8, ignored: *std.ArrayList([]const u8), callbackWriter: ?std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write)) !void {
     var proc = ChildProcess.init(&[_][]const u8{ "/usr/bin/log", "stream", "--style", "ndjson", "--predicate", filter }, allocator);
     proc.stdout_behavior = ChildProcess.StdIo.Pipe;
     proc.stderr_behavior = ChildProcess.StdIo.Ignore;
@@ -224,21 +224,23 @@ fn read(filter: []const u8, ignored: *std.ArrayList([]const u8), allocator: std.
 
         tempServices.clearAndFree();
 
-        // {
-        //     var combined = try std.ArrayList([]const u8).initCapacity(allocator, activeServices_cam_mic_loc.items.len + activeServices_screen.items.len + activeServices_screen_legacy.items.len);
-        //     try combined.appendSlice(activeServices_cam_mic_loc.items);
-        //     try combined.appendSlice(activeServices_screen.items);
-        //     try combined.appendSlice(activeServices_screen_legacy.items);
+        if (callbackWriter) |callback| {
+            var combined = try std.ArrayList([]const u8).initCapacity(allocator, activeServices.cam_mic_loc.items.len + activeServices.screen.items.len + activeServices.screen_legacy.items.len + activeServices.screen_inbuilt.items.len);
 
-        //     for (combined.items, 0..) |item, idx| {
-        //         if (idx != 0) {
-        //             // try stdout.print(",");
-        //             try stdout.writeByte(',');
-        //         }
-        //         try stdout.print("{s}", .{item});
-        //     }
-        //     try stdout.writeByte('\n');
-        // }
+            try combined.appendSlice(activeServices.cam_mic_loc.items);
+            try combined.appendSlice(activeServices.screen.items);
+            try combined.appendSlice(activeServices.screen_legacy.items);
+            try combined.appendSlice(activeServices.screen_inbuilt.items);
+
+            for (combined.items, 0..) |item, idx| {
+                if (idx != 0) {
+                    try callback.writeByte(',');
+                }
+
+                try callback.print("{s}", .{item});
+            }
+            try callback.writeByte('\n');
+        }
     }
 }
 
@@ -262,22 +264,43 @@ pub fn main() !void {
     defer args.deinit();
 
     var ignoredApplications = std.ArrayList([]const u8).init(allocator);
+    var callbackArguments = std.ArrayList([]const u8).init(allocator);
 
     try stderr.print("--------------------\n", .{});
     _ = args.next();
-    while (args.next()) |ignored| {
-        try stderr.print("Ignoring {s}\n", .{ignored});
-        try ignoredApplications.append(ignored);
+
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--")) {
+            break;
+        }
+        try stderr.print("Ignoring {s}\n", .{arg});
+        try ignoredApplications.append(arg);
+    }
+
+    while (args.next()) |arg| try callbackArguments.append(arg);
+
+    var callbackWriter: ?std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write) = undefined;
+
+    if (callbackArguments.items.len != 0) {
+        var callbackProc = ChildProcess.init(callbackArguments.items, allocator);
+        callbackProc.stdin_behavior = ChildProcess.StdIo.Pipe;
+        callbackProc.stdout_behavior = ChildProcess.StdIo.Inherit;
+        callbackProc.stderr_behavior = ChildProcess.StdIo.Inherit;
+
+        try callbackProc.spawn();
+        callbackWriter = callbackProc.stdin.?.writer();
+
+        try stderr.print("Callback process started: {s}\n", .{callbackArguments.items});
     }
 
     if (true) {
         // We only see new events - any existing consumers won't be detected until the next event
         // We could possibly perform a lookback with `log show`, or trigger an event by requesting a sensor
         // But, whatever.
-        try read(
+        try read(allocator,
             \\(subsystem == 'com.apple.controlcenter' && category == 'sensor-indicators' && formatString BEGINSWITH 'Active ')
             \\OR (subsystem == 'com.apple.controlcenter' && category == 'contentSharing')
             \\OR (subsystem == 'com.apple.screencapture' && formatString BEGINSWITH 'sampleBuffer: ')
-        , &ignoredApplications, allocator);
+        , &ignoredApplications, callbackWriter);
     }
 }
