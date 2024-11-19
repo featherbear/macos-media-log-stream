@@ -1,4 +1,0 @@
-Run process
-
-parse message (json?)
-evaluate conditions
