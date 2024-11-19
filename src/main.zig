@@ -282,15 +282,36 @@ pub fn main() !void {
     var callbackWriter: ?std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write) = undefined;
 
     if (callbackArguments.items.len != 0) {
-        var callbackProc = ChildProcess.init(callbackArguments.items, allocator);
-        callbackProc.stdin_behavior = ChildProcess.StdIo.Pipe;
-        callbackProc.stdout_behavior = ChildProcess.StdIo.Inherit;
-        callbackProc.stderr_behavior = ChildProcess.StdIo.Inherit;
+        var pipe: [2]i32 = undefined;
+        _ = std.c.pipe(&pipe);
 
-        try callbackProc.spawn();
-        callbackWriter = callbackProc.stdin.?.writer();
+        const pipeFile = std.fs.File{ .handle = pipe[1] };
+        callbackWriter = pipeFile.writer();
 
-        try stderr.print("Callback process started: {s}\n", .{callbackArguments.items});
+        const pid = try std.posix.fork();
+
+        if (pid == 0) {
+            try std.posix.dup2(pipe[0], 0);
+            try std.posix.dup2(2, 1);
+            try std.posix.dup2(2, 2);
+
+            try stderr.print("Callback process starting: {s}\n", .{callbackArguments.items});
+
+            switch (std.process.execv(allocator, callbackArguments.items)) {
+                error.FileNotFound => {
+                    try stderr.print("Error: Command not found.\n", .{});
+                    return;
+                },
+                error.AccessDenied => {
+                    try stderr.print("Error: Permission denied.\n", .{});
+                    return;
+                },
+                else => {
+                    try stderr.print("Error: Could not execute.\n", .{});
+                    return;
+                },
+            }
+        }
     }
 
     if (true) {
