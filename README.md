@@ -25,9 +25,11 @@ e.g. `./mediaLogStream 2>/dev/null`
 
 ## Callbacks
 
-A callback program can be supplied to respond to changes in active services.  
-This program should read in a line of comma-separated services from `stdin`.
+> See [sample.py](./callbacks//sample.py)
 
+A callback program can be supplied to respond to changes in active services.  
+
+This program should read in a line of comma-separated services from `stdin`.  
 There is no guarantee to the order of these services, and there may exist duplicates.
 
 All output from the callback program is routed to `stderr`.
