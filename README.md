@@ -48,6 +48,7 @@ Ready to listen to stdin
 2 unique services were received!
 2024-11-20 13:00:40.922329+1100,expiredService,cam:com.raycast.macos
 1 unique services were received!
-2024-11-20 13:00:44.404867+1100,newService,cam:com.apple.PhotoBooth
+2024-11-20 13:00:44.404867+1100,newService,mic:Audacity
 2 unique services were received!
+Microphone is active
 ```
