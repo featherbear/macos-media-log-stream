@@ -279,7 +279,7 @@ pub fn main() !void {
 
     while (args.next()) |arg| try callbackArguments.append(arg);
 
-    var callbackWriter: ?std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write) = undefined;
+    var callbackWriter: ?std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write) = null;
 
     if (callbackArguments.items.len != 0) {
         var pipe: [2]i32 = undefined;
