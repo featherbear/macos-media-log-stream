@@ -2,9 +2,30 @@ const std = @import("std");
 const ChildProcess = std.process.Child;
 
 const LogStream = struct { eventMessage: []const u8, subsystem: []const u8, processID: c_int, timestamp: []const u8 };
+const EmitEvent = struct { time: []const u8, event: []const u8, value: []const u8 };
 
 const stdout = std.io.getStdOut().writer();
 const stderr = std.io.getStdErr().writer();
+
+fn emitCsv(event: EmitEvent) !void {
+    try stdout.print("{s},{s},{s}\n", .{ event.time, event.event, event.value });
+}
+
+fn emitJson(event: EmitEvent) !void {
+    var jsonWriter = std.json.writeStream(stdout, .{});
+
+    try jsonWriter.write(.{ .time = event.time, .event = event.event, .value = event.value });
+    try stdout.writeByte('\n');
+}
+
+var shouldEmitAsJson = false;
+fn emit(event: EmitEvent) !void {
+    if (shouldEmitAsJson) {
+        try emitJson(event);
+    } else {
+        try emitCsv(event);
+    }
+}
 
 const PREFIX_SCREENSHARE = "screen:";
 
@@ -192,7 +213,7 @@ fn read(allocator: std.mem.Allocator, filter: []const u8, ignored: *std.ArrayLis
             {
                 for (tempServices.items) |value| {
                     if (strContains(u8, activeService.items, value) == null) {
-                        try stdout.print("{s},newService,{s}\n", .{ parsed.value.timestamp, value });
+                        try emit(.{ .time = parsed.value.timestamp, .event = "newService", .value = value });
 
                         const newStr = try allocator.alloc(u8, value.len);
                         std.mem.copyForwards(u8, newStr, value);
@@ -206,7 +227,7 @@ fn read(allocator: std.mem.Allocator, filter: []const u8, ignored: *std.ArrayLis
             {
                 for (activeService.items, 0..) |value, idx| {
                     if (strContains(u8, tempServices.items, value) == null) {
-                        try stdout.print("{s},expiredService,{s}\n", .{ parsed.value.timestamp, value });
+                        try emit(.{ .time = parsed.value.timestamp, .event = "expiredService", .value = value });
 
                         const removedItem = activeService.swapRemove(idx);
                         allocator.free(removedItem);
@@ -232,13 +253,8 @@ fn read(allocator: std.mem.Allocator, filter: []const u8, ignored: *std.ArrayLis
             try combined.appendSlice(activeServices.screen_legacy.items);
             try combined.appendSlice(activeServices.screen_inbuilt.items);
 
-            for (combined.items, 0..) |item, idx| {
-                if (idx != 0) {
-                    try callback.writeByte(',');
-                }
-
-                try callback.print("{s}", .{item});
-            }
+            var writer = std.json.writeStream(callback, .{});
+            try writer.write(combined.items);
             try callback.writeByte('\n');
         }
     }
@@ -269,7 +285,13 @@ pub fn main() !void {
     try stderr.print("--------------------\n", .{});
     _ = args.next();
 
+    // Find the callback program
     while (args.next()) |arg| {
+        // Also set JSON flag
+        if (std.mem.eql(u8, arg, "--json")) {
+            shouldEmitAsJson = true;
+            continue;
+        }
         if (std.mem.eql(u8, arg, "--")) {
             break;
         }

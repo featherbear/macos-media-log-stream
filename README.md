@@ -2,6 +2,8 @@
 
 A wrapper over the `/usr/bin/log` binary to aid in monitoring application use of the Camera, Microphone, Screen Capture and Location services.  
 
+Supply `--json` for JSONL output
+
 ---
 
 ## Suppressing output
